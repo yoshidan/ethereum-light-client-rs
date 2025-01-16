@@ -78,6 +78,8 @@ pub struct ExecutionUpdateInfo {
     pub state_root_branch: Vec<H256>,
     pub block_number: U64,
     pub block_number_branch: Vec<H256>,
+    pub block_hash: H256,
+    pub block_hash_branch: Vec<H256>,
 }
 
 impl ExecutionUpdate for ExecutionUpdateInfo {
@@ -95,5 +97,13 @@ impl ExecutionUpdate for ExecutionUpdateInfo {
 
     fn block_number_branch(&self) -> Vec<H256> {
         self.block_number_branch.clone()
+    }
+
+    fn block_hash(&self) -> H256 {
+        self.block_hash
+    }
+
+    fn block_hash_branch(&self) -> Vec<H256> {
+        self.block_hash_branch.clone()
     }
 }

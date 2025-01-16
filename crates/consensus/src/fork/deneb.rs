@@ -17,6 +17,7 @@ use ssz_rs_derive::SimpleSerialize;
 pub const DENEB_FORK_SPEC: ForkSpec = ForkSpec {
     execution_payload_state_root_gindex: 34,
     execution_payload_block_number_gindex: 38,
+    execution_payload_block_hash_gindex: 44,
     ..capella::CAPELLA_FORK_SPEC
 };
 

@@ -111,6 +111,10 @@ pub trait ExecutionUpdate: core::fmt::Debug + Clone + PartialEq + Eq {
     fn block_number(&self) -> U64;
     /// merkle branch of `block_number` within `ExecutionPayload`
     fn block_number_branch(&self) -> Vec<H256>;
+    /// `block_hash` of the execution payload
+    fn block_hash(&self) -> H256;
+    /// merkle branch of `block_hash` within `ExecutionPayload`
+    fn block_hash_branch(&self) -> Vec<H256>;
     /// validate the basic properties of the update
     fn validate_basic(&self) -> Result<(), Error> {
         if self.state_root_branch().is_empty() {
@@ -118,6 +122,9 @@ pub trait ExecutionUpdate: core::fmt::Debug + Clone + PartialEq + Eq {
         }
         if self.block_number_branch().is_empty() {
             return Err(Error::EmptyExecutionPayloadBlockNumberBranch);
+        }
+        if self.block_number_branch().is_empty() {
+            return Err(Error::EmptyExecutionPayloadBlockHashBranch);
         }
         Ok(())
     }

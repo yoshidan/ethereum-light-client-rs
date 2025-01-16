@@ -23,6 +23,7 @@ use std::time::SystemTime;
 
 const EXECUTION_PAYLOAD_STATE_ROOT_SUBTREE_INDEX: usize = 2;
 const EXECUTION_PAYLOAD_BLOCK_NUMBER_SUBTREE_INDEX: usize = 6;
+const EXECUTION_PAYLOAD_BLOCK_HASH_SUBTREE_INDEX: usize = 12;
 
 type Result<T> = core::result::Result<T, Error>;
 
@@ -233,11 +234,17 @@ impl<
                 &execution_payload_header,
                 EXECUTION_PAYLOAD_BLOCK_NUMBER_SUBTREE_INDEX,
             )?;
+            let (_, block_hash_branch) = deneb::prover::gen_execution_payload_field_proof(
+                &execution_payload_header,
+                EXECUTION_PAYLOAD_BLOCK_HASH_SUBTREE_INDEX,
+            )?;
             ExecutionUpdateInfo {
                 state_root: execution_payload_header.state_root,
                 state_root_branch: state_root_branch.to_vec(),
                 block_number: execution_payload_header.block_number,
                 block_number_branch: block_number_branch.to_vec(),
+                block_hash: execution_payload_header.block_hash,
+                block_hash_branch: block_hash_branch.to_vec(),
             }
         };
         Ok((ConsensusUpdateInfo(update), execution_update))

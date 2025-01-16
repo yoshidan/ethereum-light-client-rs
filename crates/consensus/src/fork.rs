@@ -16,6 +16,7 @@ pub const GENESIS_SPEC: ForkSpec = ForkSpec {
     execution_payload_gindex: 0,
     execution_payload_state_root_gindex: 0,
     execution_payload_block_number_gindex: 0,
+    execution_payload_block_hash_gindex: 0,
 };
 
 pub const ALTAIR_INDEX: usize = 0;
@@ -113,6 +114,8 @@ pub struct ForkSpec {
     pub execution_payload_state_root_gindex: u32,
     /// get_generalized_index(ExecutionPayload, 'block_number')
     pub execution_payload_block_number_gindex: u32,
+    /// get_generalized_index(ExecutionPayload, 'block_hash')
+    pub execution_payload_block_hash_gindex: u32,
 }
 
 /// Fork parameters for each fork

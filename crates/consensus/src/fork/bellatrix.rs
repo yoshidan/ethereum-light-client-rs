@@ -17,6 +17,7 @@ pub const BELLATRIX_FORK_SPEC: ForkSpec = ForkSpec {
     execution_payload_gindex: 25,
     execution_payload_state_root_gindex: 18,
     execution_payload_block_number_gindex: 22,
+    execution_payload_block_hash_gindex: 28,
     ..altair::ALTAIR_FORK_SPEC
 };
 

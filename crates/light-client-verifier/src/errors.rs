@@ -41,6 +41,8 @@ pub enum Error {
     EmptyExecutionPayloadStateRootBranch,
     /// execution payload's block number branch is empty
     EmptyExecutionPayloadBlockNumberBranch,
+    /// execution payload's block hash branch is empty
+    EmptyExecutionPayloadBlockHashBranch,
     /// invalid bls signatures
     InvalidBLSSignatures,
     /// finalized header not found
@@ -89,6 +91,8 @@ pub enum Error {
     NoExecutionPayloadInBeaconBlock,
     /// invalid merkle branch of execution block number: `error={0}`
     InvalidExecutionBlockNumberMerkleBranch(MerkleError),
+    /// invalid merkle branch of execution block hash: `error={0}`
+    InvalidExecutionBlockHashMerkleBranch(MerkleError),
     /// inconsistent next sync committee: `store:{0:?}` != `update:{1:?}`
     InconsistentNextSyncCommittee(PublicKey, PublicKey),
     /// invalid fraction: `fraction={0:?}`

@@ -133,6 +133,17 @@ impl<const SYNC_COMMITTEE_SIZE: usize, ST: LightClientStoreReader<SYNC_COMMITTEE
         )
         .map_err(Error::InvalidExecutionBlockNumberMerkleBranch)?;
 
+        is_valid_normalized_merkle_branch(
+            hash_tree_root(execution_update.block_hash())
+                .unwrap()
+                .0
+                .into(),
+            &execution_update.block_hash_branch(),
+            update_fork_spec.execution_payload_block_hash_gindex,
+            trusted_execution_root,
+        )
+        .map_err(Error::InvalidExecutionBlockNumberMerkleBranch)?;
+
         Ok(())
     }
 
@@ -530,6 +541,7 @@ pub mod test_utils {
         finalized_epoch: Epoch,
         execution_state_root: H256,
         execution_block_number: BlockNumber,
+        execution_block_hash: H256,
         is_update_contain_next_sync_committee: bool,
         scm: &MockSyncCommitteeManager<SYNC_COMMITTEE_SIZE>,
     ) -> (
@@ -545,6 +557,7 @@ pub mod test_utils {
             finalized_epoch,
             execution_state_root,
             execution_block_number,
+            execution_block_hash,
             scm.get_committee(signature_period.into()),
             scm.get_committee((attested_period + 1).into()),
             is_update_contain_next_sync_committee,
@@ -563,6 +576,7 @@ pub mod test_utils {
         finalized_epoch: Epoch,
         execution_state_root: H256,
         execution_block_number: BlockNumber,
+        execution_block_hash: H256,
         sync_committee: &MockSyncCommittee<SYNC_COMMITTEE_SIZE>,
         next_sync_committee: &MockSyncCommittee<SYNC_COMMITTEE_SIZE>,
         is_update_contain_next_sync_committee: bool,
@@ -581,6 +595,7 @@ pub mod test_utils {
             finalized_epoch,
             execution_state_root,
             execution_block_number,
+            execution_block_hash,
         );
         let finalized_root = hash_tree_root(finalized_block.clone()).unwrap();
         let (attested_block, finalized_checkpoint_branch, _, next_sync_committee_branch) =
@@ -607,6 +622,8 @@ pub mod test_utils {
             gen_execution_payload_field_proof(&execution_payload_header, 2).unwrap();
         let (_, block_number_branch) =
             gen_execution_payload_field_proof(&execution_payload_header, 6).unwrap();
+        let (_, block_hash_branch) =
+            gen_execution_payload_field_proof(&execution_payload_header, 12).unwrap();
         assert_eq!(
             r, finalized_execution_root,
             "r: {}, finalized_execution_root: {}",
@@ -644,6 +661,8 @@ pub mod test_utils {
                 state_root_branch,
                 block_number: execution_block_number,
                 block_number_branch,
+                block_hash: execution_block_hash,
+                block_hash_branch,
             },
         )
     }
@@ -692,6 +711,7 @@ pub mod test_utils {
         finalized_epoch: Epoch,
         execution_state_root: H256,
         execution_block_number: BlockNumber,
+        execution_block_hash: H256,
     ) -> DenebBeaconBlock {
         let mut block = DenebBeaconBlock {
             slot: compute_epoch_boundary_slot(ctx, finalized_epoch),
@@ -700,6 +720,7 @@ pub mod test_utils {
         let mut body = deneb::BeaconBlockBody::default();
         body.execution_payload.state_root = execution_state_root;
         body.execution_payload.block_number = execution_block_number;
+        body.execution_payload.block_hash = execution_block_hash;
         block.body = body;
         block
     }
@@ -1066,6 +1087,7 @@ mod tests {
             );
             let dummy_execution_state_root = [1u8; 32].into();
             let dummy_execution_block_number = 1;
+            let dummy_execution_block_hash = [1u8; 32].into();
 
             {
                 // valid update (store_period == finalized_period == signature_period)
@@ -1077,6 +1099,7 @@ mod tests {
                         base_finalized_epoch,
                         dummy_execution_state_root,
                         dummy_execution_block_number.into(),
+                        dummy_execution_block_hash,
                         b,
                         &scm,
                     );
@@ -1099,6 +1122,7 @@ mod tests {
                         base_finalized_epoch,
                         dummy_execution_state_root,
                         dummy_execution_block_number.into(),
+                        dummy_execution_block_hash,
                         true,
                         &scm,
                     );
@@ -1123,6 +1147,7 @@ mod tests {
                     base_finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     current_sync_committee,
                     scm.get_committee(base_store_period + 1),
                     true,
@@ -1143,6 +1168,7 @@ mod tests {
                     base_finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     current_sync_committee,
                     scm.get_committee(base_store_period + 1),
                     true,
@@ -1163,6 +1189,7 @@ mod tests {
                     base_finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     current_sync_committee,
                     scm.get_committee(base_store_period + 1),
                     true,
@@ -1184,6 +1211,7 @@ mod tests {
                         base_finalized_epoch,
                         dummy_execution_state_root,
                         dummy_execution_block_number.into(),
+                        dummy_execution_block_hash,
                         true,
                         &scm,
                     );
@@ -1219,6 +1247,7 @@ mod tests {
                         base_finalized_epoch,
                         dummy_execution_state_root,
                         dummy_execution_block_number.into(),
+                        dummy_execution_block_hash,
                         true,
                         &scm,
                     );
@@ -1260,6 +1289,7 @@ mod tests {
                     finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     true,
                     &scm,
                 );
@@ -1297,6 +1327,7 @@ mod tests {
                     finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     true,
                     &scm,
                 );
@@ -1337,6 +1368,7 @@ mod tests {
                     finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     true,
                     &scm,
                 );
@@ -1368,6 +1400,7 @@ mod tests {
                     base_finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     true,
                     &scm,
                 );
@@ -1391,6 +1424,7 @@ mod tests {
                     base_finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     true,
                     &scm,
                 );
@@ -1428,6 +1462,7 @@ mod tests {
                     base_finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     true,
                     &scm,
                 );
@@ -1486,6 +1521,7 @@ mod tests {
 
             let dummy_execution_state_root = [1u8; 32].into();
             let dummy_execution_block_number = 1;
+            let dummy_execution_block_hash = [1u8; 32].into();
 
             let (update_1, _) = gen_light_client_update_with_params::<32, _>(
                 &ctx,
@@ -1494,6 +1530,7 @@ mod tests {
                 base_finalized_epoch,
                 dummy_execution_state_root,
                 dummy_execution_block_number.into(),
+                dummy_execution_block_hash,
                 current_sync_committee,
                 scm.get_committee(base_store_period + 1),
                 true,
@@ -1508,6 +1545,7 @@ mod tests {
                     base_finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     current_sync_committee,
                     scm.get_committee(base_store_period + 2), // `base_store_period+1` is really correct
                     true,
@@ -1531,6 +1569,7 @@ mod tests {
                     base_finalized_epoch,
                     dummy_execution_state_root,
                     dummy_execution_block_number.into(),
+                    dummy_execution_block_hash,
                     current_sync_committee,
                     scm.get_committee(base_store_period + 2), // `base_store_period+1` is really correct
                     true,
@@ -1555,6 +1594,7 @@ mod tests {
                         base_finalized_epoch,
                         dummy_execution_state_root,
                         dummy_execution_block_number.into(),
+                        dummy_execution_block_hash,
                         current_sync_committee,
                         scm.get_committee(base_store_period + 2), // `base_store_period+1` is really correct
                         true,
@@ -1581,6 +1621,7 @@ mod tests {
                         base_finalized_epoch,
                         dummy_execution_state_root,
                         dummy_execution_block_number.into(),
+                        dummy_execution_block_hash,
                         current_sync_committee,
                         scm.get_committee(base_store_period + 2), // `base_store_period+1` is really correct
                         true,
@@ -1608,6 +1649,7 @@ mod tests {
                         base_finalized_epoch,
                         dummy_execution_state_root,
                         dummy_execution_block_number.into(),
+                        dummy_execution_block_hash,
                         current_sync_committee,
                         scm.get_committee(base_store_period + 2), // `base_store_period+1` is really correct
                         true,
@@ -1633,6 +1675,7 @@ mod tests {
                         base_finalized_epoch,
                         different_dummy_execution_state_root,
                         dummy_execution_block_number.into(),
+                        dummy_execution_block_hash,
                         current_sync_committee,
                         scm.get_committee(base_store_period + 1),
                         true,
@@ -1659,6 +1702,7 @@ mod tests {
                         different_finalized_epoch,
                         different_dummy_execution_state_root,
                         dummy_execution_block_number.into(),
+                        dummy_execution_block_hash,
                         current_sync_committee,
                         scm.get_committee(base_store_period + 1),
                         true,
