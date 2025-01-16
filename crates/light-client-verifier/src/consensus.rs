@@ -142,7 +142,7 @@ impl<const SYNC_COMMITTEE_SIZE: usize, ST: LightClientStoreReader<SYNC_COMMITTEE
             update_fork_spec.execution_payload_block_hash_gindex,
             trusted_execution_root,
         )
-        .map_err(Error::InvalidExecutionBlockNumberMerkleBranch)?;
+        .map_err(Error::InvalidExecutionBlockHashMerkleBranch)?;
 
         Ok(())
     }
