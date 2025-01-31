@@ -123,7 +123,7 @@ pub trait ExecutionUpdate: core::fmt::Debug + Clone + PartialEq + Eq {
         if self.block_number_branch().is_empty() {
             return Err(Error::EmptyExecutionPayloadBlockNumberBranch);
         }
-        if self.block_number_branch().is_empty() {
+        if self.block_hash_branch().is_empty() {
             return Err(Error::EmptyExecutionPayloadBlockHashBranch);
         }
         Ok(())
