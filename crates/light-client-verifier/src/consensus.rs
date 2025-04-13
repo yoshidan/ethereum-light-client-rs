@@ -1013,7 +1013,16 @@ mod tests {
                     Version([0, 0, 0, 1]),
                     vec![
                         ForkParameter::new(Version([1, 0, 0, 1]), U64(0), ALTAIR_FORK_SPEC),
-                        ForkParameter::new(Version([2, 0, 0, 1]), U64(0), BELLATRIX_FORK_SPEC),
+                        // NOTE: this is workaround. we must use the correct fork spec and block hash.
+                        ForkParameter::new(
+                            Version([2, 0, 0, 1]),
+                            U64(0),
+                            ForkSpec {
+                                execution_payload_block_hash_gindex: BELLATRIX_FORK_SPEC
+                                    .execution_payload_state_root_gindex,
+                                ..BELLATRIX_FORK_SPEC
+                            },
+                        ),
                     ],
                 )
                 .unwrap(),
