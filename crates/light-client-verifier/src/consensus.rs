@@ -15,7 +15,8 @@ use ethereum_consensus::context::ChainContext;
 use ethereum_consensus::fork::{ForkSpec, BELLATRIX_INDEX};
 use ethereum_consensus::merkle::is_valid_normalized_merkle_branch;
 use ethereum_consensus::sync_protocol::SyncCommittee;
-use ethereum_consensus::types::H256;
+use ethereum_consensus::types::{H256, U64};
+use patricia_merkle_trie::keccak::keccak_256;
 
 /// SyncProtocolVerifier is a verifier of [light client sync protocol](https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/light-client/sync-protocol.md)
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -108,32 +109,21 @@ impl<const SYNC_COMMITTEE_SIZE: usize, ST: LightClientStoreReader<SYNC_COMMITTEE
         execution_update: &EU,
     ) -> Result<(), Error> {
         execution_update.validate_basic()?;
-        if update_fork_spec.execution_payload_gindex == 0 {
-            return Err(Error::NoExecutionPayloadInBeaconBlock);
+        let rlp = execution_update.rlp();
+        if update_fork_spec.is_gloas() {
+            validate_execution_rlp(
+                &rlp,
+                trusted_execution_root,
+                execution_update.state_root(),
+                execution_update.block_number(),
+            )
+        } else {
+            validate_execution_merkle_proofs(
+                update_fork_spec,
+                trusted_execution_root,
+                execution_update,
+            )
         }
-        is_valid_normalized_merkle_branch(
-            hash_tree_root(execution_update.state_root())
-                .unwrap()
-                .0
-                .into(),
-            &execution_update.state_root_branch(),
-            update_fork_spec.execution_payload_state_root_gindex,
-            trusted_execution_root,
-        )
-        .map_err(Error::InvalidExecutionStateRootMerkleBranch)?;
-
-        is_valid_normalized_merkle_branch(
-            hash_tree_root(execution_update.block_number())
-                .unwrap()
-                .0
-                .into(),
-            &execution_update.block_number_branch(),
-            update_fork_spec.execution_payload_block_number_gindex,
-            trusted_execution_root,
-        )
-        .map_err(Error::InvalidExecutionBlockNumberMerkleBranch)?;
-
-        Ok(())
     }
 
     /// validates a misbehaviour with the store.
@@ -174,6 +164,105 @@ impl<const SYNC_COMMITTEE_SIZE: usize, ST: LightClientStoreReader<SYNC_COMMITTEE
             ))
         }
     }
+}
+
+/// RLP field indices for execution block header
+/// Based on the original Frontier block header layout.
+const RLP_STATE_ROOT_INDEX: usize = 3;
+const RLP_BLOCK_NUMBER_INDEX: usize = 8;
+
+/// Validate execution update using RLP block hash (Gloas+)
+fn validate_execution_rlp(
+    rlp: &[u8],
+    trusted_execution_root: Root,
+    expected_state_root: H256,
+    expected_block_number: U64,
+) -> Result<(), Error> {
+    // Verify keccak256(rlp) == execution_block_hash
+    let block_hash: H256 = keccak_256(rlp).into();
+    if block_hash != trusted_execution_root {
+        return Err(Error::ExecutionBlockHashMismatch(
+            trusted_execution_root,
+            block_hash,
+        ));
+    }
+
+    // Verify state_root and block_number match the RLP-decoded values
+    let (state_root, block_number) = decode_rlp_header_fields(rlp)?;
+    if expected_state_root != state_root {
+        return Err(Error::ExecutionStateRootMismatch(
+            state_root,
+            expected_state_root,
+        ));
+    }
+    if expected_block_number != block_number {
+        return Err(Error::ExecutionBlockNumberMismatch(
+            block_number,
+            expected_block_number,
+        ));
+    }
+    Ok(())
+}
+
+/// Decode state_root and block_number from RLP-encoded execution block header
+fn decode_rlp_header_fields(rlp_bytes: &[u8]) -> Result<(H256, U64), Error> {
+    let rlp = rlp::Rlp::new(rlp_bytes);
+    let min_count = RLP_STATE_ROOT_INDEX.max(RLP_BLOCK_NUMBER_INDEX) + 1;
+    if rlp
+        .item_count()
+        .map_err(|_| Error::InvalidExecutionBlockHeaderRlp)?
+        < min_count
+    {
+        return Err(Error::InvalidExecutionBlockHeaderRlp);
+    }
+    let state_root = decode_h256(&rlp, RLP_STATE_ROOT_INDEX)?;
+    let block_number = decode_u64(&rlp, RLP_BLOCK_NUMBER_INDEX)?;
+    Ok((state_root, block_number))
+}
+
+fn decode_h256(rlp: &rlp::Rlp, index: usize) -> Result<H256, Error> {
+    let bytes: Vec<u8> = rlp
+        .val_at(index)
+        .map_err(|_| Error::InvalidExecutionBlockHeaderRlp)?;
+    if bytes.len() != 32 {
+        return Err(Error::InvalidExecutionBlockHeaderRlp);
+    }
+    Ok(H256::from_slice(&bytes))
+}
+
+fn decode_u64(rlp: &rlp::Rlp, index: usize) -> Result<U64, Error> {
+    let bytes: Vec<u8> = rlp
+        .val_at(index)
+        .map_err(|_| Error::InvalidExecutionBlockHeaderRlp)?;
+    Ok(U64(bytes
+        .iter()
+        .fold(0u64, |acc, &b| (acc << 8) | b as u64)))
+}
+
+/// Validate execution update using SSZ merkle proofs (pre-Gloas)
+fn validate_execution_merkle_proofs<EU: ExecutionUpdate>(
+    fork_spec: ForkSpec,
+    trusted_execution_root: Root,
+    update: &EU,
+) -> Result<(), Error> {
+    if fork_spec.execution_payload_gindex == 0 {
+        return Err(Error::NoExecutionPayloadInBeaconBlock);
+    }
+    is_valid_normalized_merkle_branch(
+        hash_tree_root(update.state_root()).unwrap().0.into(),
+        &update.state_root_branch(),
+        fork_spec.execution_payload_state_root_gindex,
+        trusted_execution_root,
+    )
+    .map_err(Error::InvalidExecutionStateRootMerkleBranch)?;
+    is_valid_normalized_merkle_branch(
+        hash_tree_root(update.block_number()).unwrap().0.into(),
+        &update.block_number_branch(),
+        fork_spec.execution_payload_block_number_gindex,
+        trusted_execution_root,
+    )
+    .map_err(Error::InvalidExecutionBlockNumberMerkleBranch)?;
+    Ok(())
 }
 
 /// verify a sync committee attestation
