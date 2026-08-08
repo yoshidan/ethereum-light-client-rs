@@ -128,6 +128,13 @@ impl ForkSpec {
     pub fn is_gloas(&self) -> bool {
         self.execution_block_hash_gindex > 0
     }
+
+    /// gindex of `block_hash` within `ExecutionPayloadHeader`.
+    /// `block_hash` is located 6 leaves after `block_number` in every payload layout
+    /// (Capella: 22 -> 28, Deneb and later: 38 -> 44).
+    pub const fn execution_payload_block_hash_gindex(&self) -> u32 {
+        self.execution_payload_block_number_gindex + 6
+    }
 }
 
 /// Fork parameters for each fork

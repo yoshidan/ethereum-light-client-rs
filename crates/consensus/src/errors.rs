@@ -45,6 +45,8 @@ pub enum MerkleError {
     TooLongMerkleBranchLength(u32, H256, Vec<H256>, u32, Root),
     /// invalid merkle branch length error: depth={0:?} leaf={1:?} branch={2:?} subtree_index={3:?} root={4:?}
     InvalidMerkleBranchLength(u32, H256, Vec<H256>, u32, Root),
+    /// non-zero merkle branch padding error: depth={0:?} leaf={1:?} branch={2:?} subtree_index={3:?} root={4:?}
+    NonZeroMerkleBranchPadding(u32, H256, Vec<H256>, u32, Root),
     /// invalid general index error: gindex={0:?}
     InvalidGeneralIndex(i64),
 }

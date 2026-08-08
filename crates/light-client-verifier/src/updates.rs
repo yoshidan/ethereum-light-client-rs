@@ -5,7 +5,7 @@ use ethereum_consensus::compute::compute_sync_committee_period_at_slot;
 use ethereum_consensus::context::ChainContext;
 use ethereum_consensus::{
     beacon::{BeaconBlockHeader, Slot},
-    merkle::is_valid_normalized_merkle_branch,
+    merkle::{concat_generalized_indices, is_valid_normalized_merkle_branch},
     sync_protocol::{SyncAggregate, SyncCommittee},
     types::{H256, U64},
 };
@@ -58,13 +58,29 @@ pub trait ConsensusUpdate<const SYNC_COMMITTEE_SIZE: usize>:
         &self,
         ctx: &C,
     ) -> Result<(), Error> {
-        let spec = ctx.compute_fork_spec(self.finalized_beacon_header().slot);
-        // For Gloas and later forks, use execution_block_hash_gindex
-        // For earlier forks, use execution_payload_gindex
-        let gindex = if spec.is_gloas() {
-            spec.execution_block_hash_gindex
+        // The header format follows the update's container fork (attested slot),
+        // while the gindex follows the finalized header's own fork.
+        // https://github.com/ethereum/consensus-specs/blob/master/specs/gloas/light-client/sync-protocol.md#modified-is_valid_light_client_header
+        let attested_spec = ctx.compute_fork_spec(self.attested_beacon_header().slot);
+        let finalized_spec = ctx.compute_fork_spec(self.finalized_beacon_header().slot);
+        let gindex = if attested_spec.is_gloas() {
+            if finalized_spec.is_gloas() {
+                // EXECUTION_BLOCK_HASH_GINDEX_GLOAS:
+                // get_generalized_index(BeaconBlockBody, 'signed_execution_payload_bid', 'message', 'parent_block_hash')
+                finalized_spec.execution_block_hash_gindex
+            } else {
+                // A pre-Gloas finalized header inside a Gloas container is upgraded to the
+                // execution_block_hash form: the hash is proven at
+                // get_generalized_index(BeaconBlockBody, 'execution_payload', 'block_hash')
+                // (EXECUTION_BLOCK_HASH_GINDEX / _DENEB in the spec), with the branch
+                // zero-padded to the Gloas branch length.
+                concat_generalized_indices(
+                    finalized_spec.execution_payload_gindex,
+                    finalized_spec.execution_payload_block_hash_gindex(),
+                )
+            }
         } else {
-            spec.execution_payload_gindex
+            finalized_spec.execution_payload_gindex
         };
         is_valid_normalized_merkle_branch(
             self.finalized_execution_root(),

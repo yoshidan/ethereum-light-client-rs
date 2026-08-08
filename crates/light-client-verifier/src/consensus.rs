@@ -68,8 +68,19 @@ impl<const SYNC_COMMITTEE_SIZE: usize, ST: LightClientStoreReader<SYNC_COMMITTEE
         execution_update: &EU,
     ) -> Result<(), Error> {
         self.validate_consensus_update(ctx, store, consensus_update)?;
+        // The update's data format follows the attested header's fork: in a Gloas
+        // container the finalized execution root is the execution block hash and the
+        // execution update is verified against it via RLP (which holds for any
+        // execution block, including pre-Gloas ones). Otherwise the execution update
+        // is verified via SSZ merkle proofs with the finalized fork's payload gindices.
+        let attested_spec = ctx.compute_fork_spec(consensus_update.attested_beacon_header().slot);
+        let update_fork_spec = if attested_spec.is_gloas() {
+            attested_spec
+        } else {
+            ctx.compute_fork_spec(consensus_update.finalized_beacon_header().slot)
+        };
         self.validate_execution_update(
-            ctx.compute_fork_spec(consensus_update.finalized_beacon_header().slot),
+            update_fork_spec,
             consensus_update.finalized_execution_root(),
             execution_update,
         )?;
