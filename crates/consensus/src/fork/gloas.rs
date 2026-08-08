@@ -1,4 +1,4 @@
-use super::{electra, ForkSpec};
+use super::ForkSpec;
 use crate::{
     beacon::{BeaconBlockHeader, Slot},
     internal_prelude::*,
@@ -6,18 +6,26 @@ use crate::{
     types::H256,
 };
 
-/// https://github.com/ethereum/consensus-specs/blob/dev/specs/gloas/light-client/sync-protocol.md
-/// EXECUTION_BLOCK_HASH_GINDEX_GLOAS = 832
+/// https://github.com/ethereum/consensus-specs/blob/master/specs/gloas/light-client/sync-protocol.md#new-constants
+/// EIP-7688 turns BeaconState into a progressive container, so the state gindices
+/// are not inherited from Electra; EIP-7732 moves the execution commitment into
+/// signed_execution_payload_bid, which gives a new block body gindex.
 pub const GLOAS_FORK_SPEC: ForkSpec = ForkSpec {
+    // FINALIZED_ROOT_GINDEX_GLOAS
+    finalized_root_gindex: 735,
+    // CURRENT_SYNC_COMMITTEE_GINDEX_GLOAS
+    current_sync_committee_gindex: 2945,
+    // NEXT_SYNC_COMMITTEE_GINDEX_GLOAS
+    next_sync_committee_gindex: 2946,
     // Gloas uses execution_block_hash_gindex instead of execution_payload_gindex
     // The merkle proof verifies execution_block_hash (not hash_tree_root(execution)) against body_root
     execution_payload_gindex: 0,
-    // execution_payload_state_root_gindex and execution_payload_block_number_gindex are inherited
-    // from ELECTRA_FORK_SPEC (which inherits from DENEB) for ExecutionPayloadHeader verification
-    // EXECUTION_BLOCK_HASH_GINDEX_GLOAS = 832
+    // Not used in Gloas (RLP verification instead of SSZ merkle proofs)
+    execution_payload_state_root_gindex: 0,
+    execution_payload_block_number_gindex: 0,
+    // EXECUTION_BLOCK_HASH_GINDEX_GLOAS = 2856
     // get_generalized_index(BeaconBlockBody, 'signed_execution_payload_bid', 'message', 'parent_block_hash')
-    execution_block_hash_gindex: 832,
-    ..electra::ELECTRA_FORK_SPEC
+    execution_block_hash_gindex: 2856,
 };
 
 /// LightClientHeader for Gloas (spec-compliant)
