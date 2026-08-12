@@ -2113,4 +2113,218 @@ mod tests {
             }
         }
     }
+    mod gloas {
+        use crate::{
+            consensus::{
+                validate_execution_rlp, SyncProtocolVerifier, RLP_BLOCK_NUMBER_INDEX,
+                RLP_STATE_ROOT_INDEX,
+            },
+            context::{Fraction, LightClientContext},
+            errors::Error,
+            mock::MockStore,
+            updates::{bellatrix::ConsensusUpdateInfo, ConsensusUpdate, ExecutionUpdate},
+        };
+        use ethereum_consensus::{
+            beacon::Version,
+            fork::{deneb::DENEB_FORK_SPEC, gloas::GLOAS_FORK_SPEC, ForkParameter, ForkParameters},
+            merkle::{get_depth, get_subtree_index},
+            preset,
+            types::{H256, U64},
+        };
+        use patricia_merkle_trie::keccak::keccak_256;
+        use sha2::{Digest, Sha256};
+
+        const SYNC_COMMITTEE_SIZE: usize = preset::minimal::PRESET.SYNC_COMMITTEE_SIZE;
+
+        fn h256(b: u8) -> H256 {
+            H256::from_slice(&[b; 32])
+        }
+
+        fn sha256_concat(l: &H256, r: &H256) -> H256 {
+            let mut output = H256::default();
+            output
+                .0
+                .copy_from_slice(Sha256::digest([l.as_bytes(), r.as_bytes()].concat()).as_ref());
+            output
+        }
+
+        /// Build a minimal RLP-encoded execution block header whose
+        /// state_root/block_number fields decode to the given values
+        fn build_rlp_header(state_root: H256, block_number: u64) -> Vec<u8> {
+            let mut stream = rlp::RlpStream::new_list(12);
+            for i in 0..12 {
+                if i == RLP_STATE_ROOT_INDEX {
+                    stream.append(&state_root.as_bytes().to_vec());
+                } else if i == RLP_BLOCK_NUMBER_INDEX {
+                    stream.append(&block_number);
+                } else {
+                    stream.append(&vec![0u8; 32]);
+                }
+            }
+            stream.out().to_vec()
+        }
+
+        #[test]
+        fn test_validate_execution_rlp() {
+            let state_root = h256(9);
+            let block_number = U64(12345);
+            let rlp_bytes = build_rlp_header(state_root, block_number.0);
+            let block_hash: H256 = keccak_256(&rlp_bytes).into();
+
+            // valid
+            validate_execution_rlp(&rlp_bytes, block_hash, state_root, block_number).unwrap();
+
+            // block hash mismatch
+            assert!(matches!(
+                validate_execution_rlp(&rlp_bytes, h256(1), state_root, block_number),
+                Err(Error::ExecutionBlockHashMismatch(..))
+            ));
+
+            // state root mismatch
+            assert!(matches!(
+                validate_execution_rlp(&rlp_bytes, block_hash, h256(2), block_number),
+                Err(Error::ExecutionStateRootMismatch(..))
+            ));
+
+            // block number mismatch
+            assert!(matches!(
+                validate_execution_rlp(&rlp_bytes, block_hash, state_root, U64(1)),
+                Err(Error::ExecutionBlockNumberMismatch(..))
+            ));
+
+            // invalid RLP
+            let garbage = vec![0xff, 0x00, 0x01];
+            let garbage_hash: H256 = keccak_256(&garbage).into();
+            assert!(matches!(
+                validate_execution_rlp(&garbage, garbage_hash, state_root, block_number),
+                Err(Error::InvalidExecutionBlockHeaderRlp)
+            ));
+
+            // too few fields
+            let mut stream = rlp::RlpStream::new_list(5);
+            for _ in 0..5 {
+                stream.append(&vec![0u8; 32]);
+            }
+            let short = stream.out().to_vec();
+            let short_hash: H256 = keccak_256(&short).into();
+            assert!(matches!(
+                validate_execution_rlp(&short, short_hash, state_root, block_number),
+                Err(Error::InvalidExecutionBlockHeaderRlp)
+            ));
+        }
+
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        struct TestExecutionUpdate {
+            state_root: H256,
+            block_number: U64,
+            rlp: Vec<u8>,
+        }
+
+        impl ExecutionUpdate for TestExecutionUpdate {
+            fn state_root(&self) -> H256 {
+                self.state_root
+            }
+            fn state_root_branch(&self) -> Vec<H256> {
+                Vec::new()
+            }
+            fn block_number(&self) -> U64 {
+                self.block_number
+            }
+            fn block_number_branch(&self) -> Vec<H256> {
+                Vec::new()
+            }
+            fn rlp(&self) -> Vec<u8> {
+                self.rlp.clone()
+            }
+        }
+
+        #[test]
+        fn test_validate_execution_update_gloas_dispatch() {
+            let verifier = SyncProtocolVerifier::<
+                SYNC_COMMITTEE_SIZE,
+                MockStore<SYNC_COMMITTEE_SIZE>,
+            >::default();
+            let state_root = h256(9);
+            let block_number = U64(12345);
+            let rlp_bytes = build_rlp_header(state_root, block_number.0);
+            let block_hash: H256 = keccak_256(&rlp_bytes).into();
+
+            // Gloas: RLP verification path
+            let update = TestExecutionUpdate {
+                state_root,
+                block_number,
+                rlp: rlp_bytes,
+            };
+            verifier
+                .validate_execution_update(GLOAS_FORK_SPEC, block_hash, &update)
+                .unwrap();
+
+            // pre-Gloas: merkle proof path requires non-empty branches
+            let pre_gloas = TestExecutionUpdate {
+                state_root,
+                block_number,
+                rlp: Vec::new(),
+            };
+            assert!(verifier
+                .validate_execution_update(DENEB_FORK_SPEC, block_hash, &pre_gloas)
+                .is_err());
+        }
+
+        fn gloas_context() -> LightClientContext {
+            LightClientContext::new(
+                ForkParameters::new(
+                    Version([8, 0, 0, 1]),
+                    vec![ForkParameter::new(
+                        Version([8, 0, 0, 1]),
+                        U64(0),
+                        GLOAS_FORK_SPEC,
+                    )],
+                )
+                .unwrap(),
+                preset::minimal::PRESET.SECONDS_PER_SLOT,
+                preset::minimal::PRESET.SLOTS_PER_EPOCH,
+                preset::minimal::PRESET.EPOCHS_PER_SYNC_COMMITTEE_PERIOD,
+                U64(0),
+                Default::default(),
+                preset::minimal::PRESET.MIN_SYNC_COMMITTEE_PARTICIPANTS,
+                Fraction::new(2, 3).unwrap(),
+                U64(0),
+            )
+        }
+
+        #[test]
+        fn test_gloas_finalized_header_verification() {
+            // build a merkle branch for execution_block_hash at
+            // EXECUTION_BLOCK_HASH_GINDEX_GLOAS within body_root
+            let gindex = GLOAS_FORK_SPEC.execution_block_hash_gindex;
+            let depth = get_depth(gindex);
+            let subtree_index = get_subtree_index(gindex);
+            let execution_block_hash = h256(7);
+            let branch: Vec<H256> = (1..=depth as u8).map(h256).collect();
+            let mut body_root = execution_block_hash;
+            for (i, b) in branch.iter().enumerate() {
+                let v = 2u32.pow(i as u32);
+                body_root = if subtree_index / v % 2 == 1 {
+                    sha256_concat(b, &body_root)
+                } else {
+                    sha256_concat(&body_root, b)
+                };
+            }
+
+            let mut update = ConsensusUpdateInfo::<SYNC_COMMITTEE_SIZE>::default();
+            update.light_client_update.finalized_header.0.body_root = body_root;
+            update.finalized_execution_root = execution_block_hash;
+            update.finalized_execution_branch = branch;
+
+            let ctx = gloas_context();
+            update.is_valid_light_client_finalized_header(&ctx).unwrap();
+
+            // tampered execution block hash must be rejected
+            let mut tampered = update.clone();
+            tampered.finalized_execution_root = h256(0xee);
+            assert!(tampered
+                .is_valid_light_client_finalized_header(&ctx)
+                .is_err());
+        }
+    }
 }
