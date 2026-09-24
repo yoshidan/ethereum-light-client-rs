@@ -2119,20 +2119,35 @@ mod tests {
                 validate_execution_rlp, SyncProtocolVerifier, RLP_BLOCK_NUMBER_INDEX,
                 RLP_STATE_ROOT_INDEX,
             },
-            context::{Fraction, LightClientContext},
+            context::{ChainConsensusVerificationContext, Fraction, LightClientContext},
             errors::Error,
             mock::MockStore,
-            updates::{bellatrix::ConsensusUpdateInfo, ConsensusUpdate, ExecutionUpdate},
+            updates::{
+                bellatrix::ConsensusUpdateInfo, ConsensusUpdate, ExecutionUpdate, LightClientUpdate,
+            },
         };
         use ethereum_consensus::{
-            beacon::Version,
-            fork::{deneb::DENEB_FORK_SPEC, gloas::GLOAS_FORK_SPEC, ForkParameter, ForkParameters},
+            beacon::{Slot, Version},
+            compute::hash_tree_root,
+            config::Config,
+            fork::{
+                altair::ALTAIR_FORK_SPEC,
+                bellatrix::BELLATRIX_FORK_SPEC,
+                capella::CAPELLA_FORK_SPEC,
+                deneb::DENEB_FORK_SPEC,
+                electra::{self, ELECTRA_FORK_SPEC},
+                gloas::{self, GLOAS_FORK_SPEC},
+                ForkParameter, ForkParameters,
+            },
             merkle::{get_depth, get_subtree_index},
             preset,
+            sync_protocol::{SyncAggregate, SyncCommittee},
             types::{H256, U64},
         };
+        use hex_literal::hex;
         use patricia_merkle_trie::keccak::keccak_256;
         use sha2::{Digest, Sha256};
+        use std::{fs, time::SystemTime};
 
         const SYNC_COMMITTEE_SIZE: usize = preset::minimal::PRESET.SYNC_COMMITTEE_SIZE;
 
@@ -2325,6 +2340,222 @@ mod tests {
             assert!(tampered
                 .is_valid_light_client_finalized_header(&ctx)
                 .is_err());
+        }
+
+        // ---------------------------------------------------------------------------
+        // Fulu -> Gloas transition with fixtures captured from a devnet
+        // (minimal preset, all forks at epoch 0 except Gloas at epoch 8, i.e. the
+        // first slot of sync committee period 1)
+        // ---------------------------------------------------------------------------
+
+        const TEST_DATA_DIR: &str = "./data/gloas";
+        const GLOAS_FORK_EPOCH: u64 = 8;
+
+        #[derive(serde::Deserialize)]
+        struct FuluBootstrapResponse {
+            data: FuluBootstrapData,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct FuluBootstrapData {
+            current_sync_committee: SyncCommittee<SYNC_COMMITTEE_SIZE>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct FuluUpdateResponse {
+            data: FuluUpdateData,
+        }
+
+        /// Fulu keeps the Electra light client header layout
+        #[derive(serde::Deserialize)]
+        struct FuluUpdateData {
+            attested_header: electra::LightClientHeader<256, 32>,
+            next_sync_committee: SyncCommittee<SYNC_COMMITTEE_SIZE>,
+            next_sync_committee_branch: Vec<H256>,
+            finalized_header: electra::LightClientHeader<256, 32>,
+            finality_branch: Vec<H256>,
+            sync_aggregate: SyncAggregate<SYNC_COMMITTEE_SIZE>,
+            signature_slot: Slot,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct GloasUpdateResponse {
+            data: GloasUpdateData,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct GloasUpdateData {
+            attested_header: gloas::LightClientHeader,
+            next_sync_committee: Option<SyncCommittee<SYNC_COMMITTEE_SIZE>>,
+            next_sync_committee_branch: Option<Vec<H256>>,
+            finalized_header: gloas::LightClientHeader,
+            finality_branch: Vec<H256>,
+            sync_aggregate: SyncAggregate<SYNC_COMMITTEE_SIZE>,
+            signature_slot: Slot,
+        }
+
+        /// `debug_getRawHeader` and `eth_getBlockByHash` of the finalized execution block
+        #[derive(serde::Deserialize)]
+        struct RawExecutionHeader {
+            rlp: String,
+            state_root: H256,
+            number: String,
+        }
+
+        fn load<T: serde::de::DeserializeOwned>(name: &str) -> T {
+            let s = fs::read_to_string(format!("{TEST_DATA_DIR}/{name}")).unwrap();
+            serde_json::from_str(&s).unwrap()
+        }
+
+        fn decode_hex(s: &str) -> Vec<u8> {
+            let s = s.trim_start_matches("0x");
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+                .collect()
+        }
+
+        fn fulu_to_gloas_context(gloas_fork_epoch: u64) -> LightClientContext {
+            LightClientContext::new_with_config(
+                Config {
+                    preset: preset::minimal::PRESET,
+                    fork_parameters: ForkParameters::new(
+                        Version([0, 0, 0, 1]),
+                        vec![
+                            ForkParameter::new(Version([1, 0, 0, 1]), U64(0), ALTAIR_FORK_SPEC),
+                            ForkParameter::new(Version([2, 0, 0, 1]), U64(0), BELLATRIX_FORK_SPEC),
+                            ForkParameter::new(Version([3, 0, 0, 1]), U64(0), CAPELLA_FORK_SPEC),
+                            ForkParameter::new(Version([4, 0, 0, 1]), U64(0), DENEB_FORK_SPEC),
+                            ForkParameter::new(Version([5, 0, 0, 1]), U64(0), ELECTRA_FORK_SPEC),
+                            // Fulu does not change the light client protocol
+                            ForkParameter::new(Version([6, 0, 0, 1]), U64(0), ELECTRA_FORK_SPEC),
+                            ForkParameter::new(
+                                Version([7, 0, 0, 1]),
+                                U64(gloas_fork_epoch),
+                                GLOAS_FORK_SPEC,
+                            ),
+                        ],
+                    )
+                    .unwrap(),
+                    min_genesis_time: U64(1578009600),
+                },
+                H256::from_slice(
+                    hex!("83431ec7fcf92cfc44947fc0418e831c25e1d0806590231c439830db7ad54fda")
+                        .as_ref(),
+                ),
+                1790205664.into(),
+                Fraction::new(2, 3).unwrap(),
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    .into(),
+            )
+        }
+
+        fn fulu_consensus_update(d: FuluUpdateData) -> ConsensusUpdateInfo<SYNC_COMMITTEE_SIZE> {
+            ConsensusUpdateInfo {
+                light_client_update: LightClientUpdate {
+                    attested_header: d.attested_header.beacon,
+                    next_sync_committee: Some((
+                        d.next_sync_committee,
+                        d.next_sync_committee_branch,
+                    )),
+                    finalized_header: (d.finalized_header.beacon, d.finality_branch),
+                    sync_aggregate: d.sync_aggregate,
+                    signature_slot: d.signature_slot,
+                },
+                finalized_execution_root: hash_tree_root(d.finalized_header.execution).unwrap(),
+                finalized_execution_branch: d.finalized_header.execution_branch,
+            }
+        }
+
+        fn gloas_consensus_update(d: GloasUpdateData) -> ConsensusUpdateInfo<SYNC_COMMITTEE_SIZE> {
+            ConsensusUpdateInfo {
+                light_client_update: LightClientUpdate {
+                    attested_header: d.attested_header.beacon,
+                    next_sync_committee: d.next_sync_committee.zip(d.next_sync_committee_branch),
+                    finalized_header: (d.finalized_header.beacon, d.finality_branch),
+                    sync_aggregate: d.sync_aggregate,
+                    signature_slot: d.signature_slot,
+                },
+                // for Gloas the execution root is the execution block hash itself
+                finalized_execution_root: d.finalized_header.execution_block_hash,
+                finalized_execution_branch: d.finalized_header.execution_branch,
+            }
+        }
+
+        /// The trusted state is finalized in Fulu and the next update is finalized in Gloas.
+        /// Since the fork activates at a period boundary, that update is also a sync
+        /// committee period transition.
+        #[test]
+        fn test_fork_fulu_to_gloas() {
+            let bootstrap: FuluBootstrapResponse = load("bootstrap_period_0.json");
+            let period_0: FuluUpdateResponse = load("light_client_update_period_0.json");
+            let period_1: GloasUpdateResponse = load("light_client_update_period_1.json");
+            let finality: GloasUpdateResponse = load("finality_update_gloas.json");
+            let raw_header: RawExecutionHeader = load("light_client_update_period_1_rlp.json");
+
+            let ctx = fulu_to_gloas_context(GLOAS_FORK_EPOCH);
+            let verifier = SyncProtocolVerifier::<
+                SYNC_COMMITTEE_SIZE,
+                MockStore<SYNC_COMMITTEE_SIZE>,
+            >::default();
+
+            // trusted state: finalized in Fulu (period 0), holding the period 1 sync committee
+            let mut store = MockStore::new(
+                period_0.data.finalized_header.beacon.clone(),
+                bootstrap.data.current_sync_committee,
+                Default::default(),
+            );
+            store.next_sync_committee = Some(period_0.data.next_sync_committee.clone());
+
+            // sanity: a Fulu update against the Fulu store
+            let fulu_update = fulu_consensus_update(period_0.data);
+            verifier
+                .validate_consensus_update(&ctx, &store, &fulu_update)
+                .unwrap();
+
+            // 1. the first update after the fork: attested/finalized in Gloas, trusted state in Fulu
+            let gloas_update = gloas_consensus_update(period_1.data);
+            verifier
+                .validate_consensus_update(&ctx, &store, &gloas_update)
+                .unwrap();
+
+            //    the finalized Gloas execution block is verified via its RLP header
+            let execution_update = TestExecutionUpdate {
+                state_root: raw_header.state_root,
+                block_number: U64(u64::from_str_radix(
+                    raw_header.number.trim_start_matches("0x"),
+                    16,
+                )
+                .unwrap()),
+                rlp: decode_hex(&raw_header.rlp),
+            };
+            verifier
+                .validate_execution_update(
+                    ctx.compute_fork_spec(gloas_update.finalized_beacon_header().slot),
+                    gloas_update.finalized_execution_root(),
+                    &execution_update,
+                )
+                .unwrap();
+
+            //    without the Gloas fork scheduled, the same update is verified with the Fulu
+            //    layout and must be rejected
+            let ctx_without_gloas = fulu_to_gloas_context(u64::MAX);
+            assert!(verifier
+                .validate_consensus_update(&ctx_without_gloas, &store, &gloas_update)
+                .is_err());
+
+            // 2. continue from the store advanced into Gloas
+            let store = store
+                .apply_light_client_update(&ctx, &gloas_update)
+                .unwrap()
+                .unwrap();
+            let finality_update = gloas_consensus_update(finality.data);
+            verifier
+                .validate_consensus_update(&ctx, &store, &finality_update)
+                .unwrap();
         }
     }
 }
